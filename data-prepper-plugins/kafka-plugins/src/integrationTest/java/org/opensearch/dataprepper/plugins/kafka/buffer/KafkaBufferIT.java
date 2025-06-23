@@ -58,7 +58,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
@@ -446,6 +445,31 @@ public class KafkaBufferIT {
 
         @BeforeEach
         void setUp() throws NoSuchAlgorithmException, InvalidKeyException, NoSuchPaddingException {
+            random = new Random();
+            acknowledgementSetManager = mock(AcknowledgementSetManager.class);
+            acknowledgementSet = mock(AcknowledgementSet.class);
+            lenient().doAnswer((a) -> null).when(acknowledgementSet).complete();
+            lenient().when(acknowledgementSetManager.create(any(), any(Duration.class))).thenReturn(acknowledgementSet);
+            objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+
+            when(pluginSetting.getPipelineName()).thenReturn(UUID.randomUUID().toString());
+
+            topicName = "buffer-" + RandomStringUtils.randomAlphabetic(5);
+
+            Map<String, Object> topicConfigMap = new java.util.HashMap<>(Map.of(
+                    "name", topicName,
+                    "group_id", "buffergroup-" + RandomStringUtils.randomAlphabetic(6),
+                    "create_topic", true
+            ));
+
+            topicConfig = objectMapper.convertValue(topicConfigMap, BufferTopicConfig.class);
+
+            final Map<String, Object> bufferConfigMap = new java.util.HashMap<>(Map.of(
+                    "topics", List.of(topicConfigMap),
+                    "bootstrap_servers", List.of(bootstrapServersCommaDelimited),
+                    "encryption", Map.of("type", "none")
+            ));
+
             final KeyGenerator aesKeyGenerator = KeyGenerator.getInstance("AES");
             aesKeyGenerator.init(256);
             final SecretKey secretKey = aesKeyGenerator.generateKey();
@@ -457,11 +481,11 @@ public class KafkaBufferIT {
             final byte[] base64Bytes = Base64.getEncoder().encode(secretKey.getEncoded());
             aesKey = new String(base64Bytes);
 
-            final Map<String, Object> topicConfigMap = objectMapper.convertValue(topicConfig, Map.class);
             topicConfigMap.put("encryption_key", aesKey);
-            final Map<String, Object> bufferConfigMap = objectMapper.convertValue(kafkaBufferConfig, Map.class);
             bufferConfigMap.put("topics", List.of(topicConfigMap));
             kafkaBufferConfig = objectMapper.convertValue(bufferConfigMap, KafkaBufferConfig.class);
+
+            byteDecoder = null;
         }
 
         @Test
