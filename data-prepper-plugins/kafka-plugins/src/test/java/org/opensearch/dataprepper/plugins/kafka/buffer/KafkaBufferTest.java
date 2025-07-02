@@ -26,6 +26,7 @@ import org.opensearch.dataprepper.model.event.JacksonEvent;
 import org.opensearch.dataprepper.model.plugin.PluginFactory;
 import org.opensearch.dataprepper.model.record.Record;
 import org.opensearch.dataprepper.plugins.buffer.blockingbuffer.BlockingBuffer;
+import org.opensearch.dataprepper.plugins.encryption.EncryptionSupplier;
 import org.opensearch.dataprepper.plugins.kafka.admin.KafkaAdminAccessor;
 import org.opensearch.dataprepper.plugins.kafka.common.KafkaMdc;
 import org.opensearch.dataprepper.plugins.kafka.common.thread.KafkaPluginThreadFactory;
@@ -132,6 +133,9 @@ class KafkaBufferTest {
     @Mock
     private CircuitBreaker circuitBreaker;
 
+    @Mock
+    private EncryptionSupplier encryptionSupplier;
+
     public KafkaBuffer createObjectUnderTest() {
         return createObjectUnderTest(List.of(consumer));
     }
@@ -147,7 +151,7 @@ class KafkaBufferTest {
             final MockedConstruction<KafkaCustomConsumerFactory> consumerFactoryMock =
                 mockConstruction(KafkaCustomConsumerFactory.class, (mock, context) -> {
                 consumerFactory = mock;
-                when(consumerFactory.createConsumersForTopic(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any())).thenReturn(consumers);
+                when(consumerFactory.createConsumersForTopic(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any())).thenReturn(consumers);
             });
             final MockedConstruction<KafkaAdminAccessor> adminAccessorMock =
                 mockConstruction(KafkaAdminAccessor.class, (mock, context) -> kafkaAdminAccessor = mock);
@@ -157,7 +161,7 @@ class KafkaBufferTest {
                  })) {
 
             executorsMockedStatic.when(() -> Executors.newFixedThreadPool(anyInt(), any(KafkaPluginThreadFactory.class))).thenReturn(executorService);
-            return new KafkaBuffer(pluginSetting, bufferConfig, acknowledgementSetManager, null, awsCredentialsSupplier, circuitBreaker);
+            return new KafkaBuffer(pluginSetting, bufferConfig, acknowledgementSetManager, null, awsCredentialsSupplier, circuitBreaker, encryptionSupplier);
         }
     }
 

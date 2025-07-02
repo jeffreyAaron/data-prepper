@@ -13,7 +13,6 @@ import com.github.fge.jsonschema.core.exceptions.ProcessingException;
 import com.github.fge.jsonschema.core.report.ProcessingReport;
 import com.github.fge.jsonschema.main.JsonSchema;
 import com.github.fge.jsonschema.main.JsonSchemaFactory;
-import com.github.luben.zstd.Zstd;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
@@ -26,6 +25,7 @@ import org.opensearch.dataprepper.model.event.Event;
 import org.opensearch.dataprepper.model.event.EventHandle;
 import org.opensearch.dataprepper.model.log.JacksonLog;
 import org.opensearch.dataprepper.model.record.Record;
+import org.opensearch.dataprepper.plugins.codec.CompressionOption;
 import org.opensearch.dataprepper.plugins.kafka.configuration.KafkaProducerConfig;
 import org.opensearch.dataprepper.plugins.kafka.configuration.KafkaProducerProperties;
 import org.opensearch.dataprepper.plugins.kafka.service.SchemaService;
@@ -35,7 +35,9 @@ import org.opensearch.dataprepper.plugins.kafka.util.MessageFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.Map;
@@ -74,7 +76,7 @@ public class KafkaCustomProducer<T> {
 
     private final KafkaTopicProducerMetrics topicMetrics;
 
-    private boolean compressionEnabled;
+    private final CompressionOption compressionConfig;
 
     public KafkaCustomProducer(final KafkaProducer producer,
                                final KafkaProducerConfig kafkaProducerConfig,
@@ -82,7 +84,8 @@ public class KafkaCustomProducer<T> {
                                final ExpressionEvaluator expressionEvaluator,
                                final String tagTargetKey,
                                final KafkaTopicProducerMetrics topicMetrics,
-                               final SchemaService schemaService
+                               final SchemaService schemaService,
+                               final CompressionOption compressionConfig
     ) {
         this.producer = producer;
         this.kafkaProducerConfig = kafkaProducerConfig;
@@ -95,7 +98,7 @@ public class KafkaCustomProducer<T> {
         this.schemaService = schemaService;
         this.topicMetrics = topicMetrics;
         this.topicMetrics.register(this.producer);
-        this.compressionEnabled = true;
+        this.compressionConfig = (compressionConfig == null) ? CompressionOption.NONE: compressionConfig;
     }
 
     public KafkaCustomProducer(final KafkaProducer producer,
@@ -104,11 +107,9 @@ public class KafkaCustomProducer<T> {
                                final ExpressionEvaluator expressionEvaluator,
                                final String tagTargetKey,
                                final KafkaTopicProducerMetrics topicMetrics,
-                               final SchemaService schemaService,
-                               final boolean compressionEnabled
+                               final SchemaService schemaService
     ) {
-        this(producer, kafkaProducerConfig, dlqSink, expressionEvaluator, tagTargetKey, topicMetrics, schemaService);
-        this.compressionEnabled = compressionEnabled;
+        this(producer, kafkaProducerConfig, dlqSink, expressionEvaluator, tagTargetKey, topicMetrics, schemaService, null);
     }
 
     KafkaTopicProducerMetrics getTopicMetrics() {
@@ -117,11 +118,11 @@ public class KafkaCustomProducer<T> {
 
     public void produceRawData(final byte[] bytes, final String key) throws Exception{
         try {
-            if (compressionEnabled) {
-                send(topicName, key, Zstd.compress(bytes)).get();
-            } else {
-                send(topicName, key, bytes).get();
-            }
+            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            OutputStream compressedOutputStream = compressionConfig.getCompressionEngine().createOutputStream(byteArrayOutputStream);
+            compressedOutputStream.write(bytes);
+            send(topicName, key, byteArrayOutputStream.toByteArray()).get();
+
             topicMetrics.update(producer);
         } catch (Exception e) {
             topicMetrics.getNumberOfRawDataSendErrors().increment();
@@ -170,14 +171,12 @@ public class KafkaCustomProducer<T> {
     private void publishJsonMessageAsBytes(Record<Event> record, String key) throws Exception {
         JsonNode dataNode = record.getData().getJsonNode();
         byte[] bytes = objectMapper.writeValueAsBytes(dataNode);
-        byte[] bytesToSend;
-        if (compressionEnabled) {
-            bytesToSend = Zstd.compress(bytes);
-        } else {
-            bytesToSend = bytes;
-        }
 
-        send(topicName, key, bytesToSend);
+        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        OutputStream compressedOutputStream = compressionConfig.getCompressionEngine().createOutputStream(byteArrayOutputStream);
+        compressedOutputStream.write(bytes);
+
+        send(topicName, key, byteArrayOutputStream.toByteArray());
     }
 
     private Event getEvent(final Record<Event> record) {
@@ -259,14 +258,5 @@ public class KafkaCustomProducer<T> {
         Map<String, Object> eventData = objectMapper.readValue(eventJsonString, new TypeReference<>() {
         });
         return JacksonLog.builder().withData(eventData).build();
-    }
-
-
-    public boolean isCompressionEnabled() {
-        return compressionEnabled;
-    }
-
-    public void setCompressionEnabled(boolean compressionEnabled) {
-        this.compressionEnabled = compressionEnabled;
     }
 }
